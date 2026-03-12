@@ -19,6 +19,9 @@ dev = [
 web = [
     "flask>=3.0.0",
 ]
+screenshot = [
+    "playwright>=1.40.0",
+]
 
 [build-system]
 requires = ["hatchling"]

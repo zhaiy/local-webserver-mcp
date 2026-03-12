@@ -9,6 +9,7 @@ Features:
 
 import asyncio
 import atexit
+import base64
 import json
 import logging
 import os
@@ -19,6 +20,14 @@ import httpx
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from ddgs import DDGS
+
+try:
+    from playwright.async_api import async_playwright
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    async_playwright = None
+    HAS_PLAYWRIGHT = False
 
 # Initialize the MCP server
 mcp = FastMCP("Web Server")
@@ -560,6 +569,59 @@ async def batch_http_request(
         return _error_response("Exception", str(exc))
     finally:
         logger.info("batch_http_request completed in %.2fs", time_module.perf_counter() - start)
+
+
+if HAS_PLAYWRIGHT:
+
+    @mcp.tool()
+    async def screenshot_webpage(
+        url: str,
+        full_page: bool = False,
+        width: int = 1280,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        """
+        Capture webpage screenshot and return base64 image bytes.
+
+        Requires playwright:
+            uv pip install -e ".[screenshot]" && playwright install chromium
+        """
+        start = time_module.perf_counter()
+        logger.info("screenshot_webpage called", extra={"url": url})
+        try:
+            assert async_playwright is not None
+            async with async_playwright() as p:
+                browser = await p.chromium.launch()
+                page = await browser.new_page(viewport={"width": width, "height": height})
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                image_bytes = await page.screenshot(full_page=full_page, type="png")
+                await browser.close()
+
+            return _success_response(
+                {
+                    "url": url,
+                    "image_base64": base64.b64encode(image_bytes).decode("utf-8"),
+                    "width": width,
+                    "height": height,
+                }
+            )
+        except httpx.TimeoutException as exc:
+            logger.error("screenshot_webpage failed", exc_info=True)
+            return _error_response("TimeoutException", str(exc))
+        except httpx.ConnectError as exc:
+            logger.error("screenshot_webpage failed", exc_info=True)
+            return _error_response("ConnectError", str(exc))
+        except httpx.HTTPStatusError as exc:
+            logger.error("screenshot_webpage failed", exc_info=True)
+            return _error_response("HTTPStatusError", str(exc))
+        except json.JSONDecodeError as exc:
+            logger.error("screenshot_webpage failed", exc_info=True)
+            return _error_response("JSONDecodeError", str(exc))
+        except Exception as exc:
+            logger.error("screenshot_webpage failed", exc_info=True)
+            return _error_response("Exception", str(exc))
+        finally:
+            logger.info("screenshot_webpage completed in %.2fs", time_module.perf_counter() - start)
 
 
 def main():
