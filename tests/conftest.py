@@ -6,8 +6,8 @@ import pytest
 
 @pytest.fixture
 def mock_httpx_client() -> Iterator[dict[str, AsyncMock]]:
-    with patch("mcp_web_server.server.HTTP_CLIENT.request", new_callable=AsyncMock) as mock_request:
-        with patch("mcp_web_server.server.HTTP_CLIENT.get", new_callable=AsyncMock) as mock_get:
+    with patch("mcp_web_server.http_client.HTTP_CLIENT.request", new_callable=AsyncMock) as mock_request:
+        with patch("mcp_web_server.http_client.HTTP_CLIENT.get", new_callable=AsyncMock) as mock_get:
             yield {"request": mock_request, "get": mock_get}
 
 

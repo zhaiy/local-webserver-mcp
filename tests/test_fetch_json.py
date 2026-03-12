@@ -1,5 +1,5 @@
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -65,3 +65,15 @@ async def test_fetch_json_empty_object(mock_httpx_client: dict) -> None:
 
     assert result["success"] is True
     assert result["data"] == {}
+
+
+@pytest.mark.asyncio
+async def test_fetch_json_applies_http_rate_limit(mock_httpx_client: dict) -> None:
+    mock_httpx_client["get"].return_value = _json_response({"ok": True})
+    acquire_mock = AsyncMock()
+
+    with patch("mcp_web_server.tools.http.HTTP_RATE_LIMITER.acquire", acquire_mock):
+        result = await fetch_json("https://example.com/data.json")
+
+    assert result["success"] is True
+    acquire_mock.assert_awaited_once()

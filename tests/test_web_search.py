@@ -20,8 +20,8 @@ async def test_web_search_success() -> None:
                 {"title": "B", "href": "https://b.com", "body": "sb"},
             ]
 
-    with patch("mcp_web_server.server.DDGS", FakeDDGS):
-        with patch("mcp_web_server.server.asyncio.to_thread", new=AsyncMock(side_effect=lambda fn: fn())):
+    with patch("mcp_web_server.tools.search.DDGS", FakeDDGS):
+        with patch("mcp_web_server.tools.search.asyncio.to_thread", new=AsyncMock(side_effect=lambda fn: fn())):
             result = await web_search("python", num_results=2)
 
     assert result["success"] is True
@@ -38,8 +38,8 @@ async def test_web_search_failure() -> None:
         def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
             return None
 
-    with patch("mcp_web_server.server.DDGS", BrokenDDGS):
-        with patch("mcp_web_server.server.asyncio.to_thread", new=AsyncMock(side_effect=lambda fn: fn())):
+    with patch("mcp_web_server.tools.search.DDGS", BrokenDDGS):
+        with patch("mcp_web_server.tools.search.asyncio.to_thread", new=AsyncMock(side_effect=lambda fn: fn())):
             result = await web_search("python")
 
     assert result["success"] is False
@@ -58,8 +58,8 @@ async def test_web_search_empty_result() -> None:
         def text(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             return []
 
-    with patch("mcp_web_server.server.DDGS", EmptyDDGS):
-        with patch("mcp_web_server.server.asyncio.to_thread", new=AsyncMock(side_effect=lambda fn: fn())):
+    with patch("mcp_web_server.tools.search.DDGS", EmptyDDGS):
+        with patch("mcp_web_server.tools.search.asyncio.to_thread", new=AsyncMock(side_effect=lambda fn: fn())):
             result = await web_search("python")
 
     assert result["success"] is True
