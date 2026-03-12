@@ -63,6 +63,13 @@ pytest
 | `MCP_RATE_LIMIT_SEARCH` | `web_search` 每分钟调用上限 | `5` |
 | `MCP_RATE_LIMIT_HTTP` | `http_request` 每分钟调用上限 | `30` |
 | `MCP_RATE_LIMIT_EXTRACT` | `extract_webpage_content` 每分钟调用上限 | `10` |
+| `MCP_STDIN_INVALID_INPUT_POLICY` | 非法 stdin 行处理策略：`ignore`/`warn`/`strict` | `warn` |
+
+`MCP_STDIN_INVALID_INPUT_POLICY` 说明：
+
+- `warn`（默认）：忽略非法 JSON-RPC 行并记录 warning
+- `ignore`：忽略非法 JSON-RPC 行且不记录 warning
+- `strict`：收到非法 JSON-RPC 行即快速失败（便于定位客户端写入问题）
 
 ## 可选截图依赖
 
