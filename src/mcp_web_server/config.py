@@ -22,3 +22,11 @@ HTTPS_PROXY = os.getenv("MCP_HTTPS_PROXY")
 RATE_LIMIT_SEARCH = int(os.getenv("MCP_RATE_LIMIT_SEARCH", "5"))
 RATE_LIMIT_HTTP = int(os.getenv("MCP_RATE_LIMIT_HTTP", "30"))
 RATE_LIMIT_EXTRACT = int(os.getenv("MCP_RATE_LIMIT_EXTRACT", "10"))
+
+SUPPORTED_SEARCH_ENGINES = ("duckduckgo", "bing", "baidu")
+SEARCH_ENGINE = os.getenv("MCP_SEARCH_ENGINE", "duckduckgo").strip().lower()
+BING_DOMAIN = os.getenv("MCP_BING_DOMAIN", "www.bing.com").strip()
+
+# Optional API key mode placeholders for future engine providers.
+SEARCH_API_KEY = os.getenv("MCP_SEARCH_API_KEY")
+SEARCH_API_ENDPOINT = os.getenv("MCP_SEARCH_API_ENDPOINT")

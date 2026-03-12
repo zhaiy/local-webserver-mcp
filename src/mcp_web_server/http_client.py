@@ -19,11 +19,11 @@ HTTP_HEADERS = {
 }
 
 HTTP_TRANSPORT = httpx.AsyncHTTPTransport(retries=2)
-HTTP_PROXIES: dict[str, str] = {}
+HTTP_MOUNTS: dict[str, httpx.AsyncHTTPTransport] = {}
 if HTTP_PROXY:
-    HTTP_PROXIES["http://"] = HTTP_PROXY
+    HTTP_MOUNTS["http://"] = httpx.AsyncHTTPTransport(proxy=HTTP_PROXY, retries=2)
 if HTTPS_PROXY:
-    HTTP_PROXIES["https://"] = HTTPS_PROXY
+    HTTP_MOUNTS["https://"] = httpx.AsyncHTTPTransport(proxy=HTTPS_PROXY, retries=2)
 
 _HTTP_CLIENT_KWARGS: dict[str, Any] = {
     "transport": HTTP_TRANSPORT,
@@ -32,8 +32,8 @@ _HTTP_CLIENT_KWARGS: dict[str, Any] = {
     "timeout": httpx.Timeout(DEFAULT_TIMEOUT, connect=10.0),
     "follow_redirects": True,
 }
-if HTTP_PROXIES:
-    _HTTP_CLIENT_KWARGS["proxies"] = HTTP_PROXIES
+if HTTP_MOUNTS:
+    _HTTP_CLIENT_KWARGS["mounts"] = HTTP_MOUNTS
 
 HTTP_CLIENT = httpx.AsyncClient(**_HTTP_CLIENT_KWARGS)
 

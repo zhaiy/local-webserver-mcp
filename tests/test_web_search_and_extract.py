@@ -89,3 +89,13 @@ async def test_web_search_and_extract_uses_single_limit_per_stage() -> None:
     search_acquire.assert_awaited_once()
     extract_acquire.assert_awaited_once()
     assert extract_impl.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_and_extract_unknown_engine_returns_validation_error() -> None:
+    with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "unknown"):
+        with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
+            result = await web_search_and_extract("query", num_results=1)
+
+    assert result["success"] is False
+    assert result["error"] == "ValidationError"
