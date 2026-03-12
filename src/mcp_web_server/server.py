@@ -74,6 +74,31 @@ HTTP_CLIENT = httpx.AsyncClient(
 )
 
 
+class RateLimiter:
+    def __init__(self, max_calls: int, period: float):
+        self.max_calls = max_calls
+        self.period = period
+        self.calls: list[float] = []
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time_module.monotonic()
+            self.calls = [t for t in self.calls if now - t < self.period]
+            if len(self.calls) >= self.max_calls:
+                sleep_time = self.period - (now - self.calls[0])
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+                now = time_module.monotonic()
+                self.calls = [t for t in self.calls if now - t < self.period]
+            self.calls.append(time_module.monotonic())
+
+
+SEARCH_RATE_LIMITER = RateLimiter(max_calls=int(os.getenv("MCP_RATE_LIMIT_SEARCH", "5")), period=60.0)
+HTTP_RATE_LIMITER = RateLimiter(max_calls=int(os.getenv("MCP_RATE_LIMIT_HTTP", "30")), period=60.0)
+EXTRACT_RATE_LIMITER = RateLimiter(max_calls=int(os.getenv("MCP_RATE_LIMIT_EXTRACT", "10")), period=60.0)
+
+
 async def _close_http_client() -> None:
     if not HTTP_CLIENT.is_closed:
         await HTTP_CLIENT.aclose()
@@ -225,6 +250,7 @@ async def http_request(
     if timeout_error:
         return timeout_error
     try:
+        await HTTP_RATE_LIMITER.acquire()
         logger.debug("HTTP %s %s", method.upper(), url)
         response = await HTTP_CLIENT.request(
             method=method.upper(),
@@ -286,6 +312,7 @@ async def web_search(
     if num_results_error:
         return num_results_error
     try:
+        await SEARCH_RATE_LIMITER.acquire()
         def _search() -> list[dict[str, str]]:
             results: list[dict[str, str]] = []
             with DDGS() as ddgs:
@@ -354,6 +381,7 @@ async def extract_webpage_content(
     if max_length_error:
         return max_length_error
     try:
+        await EXTRACT_RATE_LIMITER.acquire()
         logger.debug("HTTP GET %s", url)
         response = await HTTP_CLIENT.get(url)
         response.raise_for_status()
