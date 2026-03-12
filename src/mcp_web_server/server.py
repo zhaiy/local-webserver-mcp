@@ -495,6 +495,73 @@ async def web_search_and_extract(
         logger.info("web_search_and_extract completed in %.2fs", time_module.perf_counter() - start)
 
 
+@mcp.tool()
+async def batch_http_request(
+    urls: list[str],
+    method: str = "GET",
+    headers: Optional[dict] = None,
+    timeout: int = 30,
+    max_concurrent: int = 5,
+) -> dict[str, Any]:
+    """
+    Make concurrent HTTP requests for multiple URLs.
+
+    Args:
+        urls: URL list
+        method: HTTP method
+        headers: Optional request headers
+        timeout: Timeout in seconds
+        max_concurrent: Max concurrent requests
+
+    Returns:
+        Unified response containing per-URL results
+    """
+    start = time_module.perf_counter()
+    logger.info(
+        "batch_http_request called",
+        extra={"url_count": len(urls), "method": method.upper(), "max_concurrent": max_concurrent},
+    )
+    semaphore = asyncio.Semaphore(max_concurrent)
+    merged_headers = {**HTTP_HEADERS, **(headers or {})}
+
+    async def _request_one(url: str) -> dict[str, Any]:
+        async with semaphore:
+            try:
+                logger.debug("HTTP %s %s", method.upper(), url)
+                response = await HTTP_CLIENT.request(
+                    method=method.upper(),
+                    url=url,
+                    headers=merged_headers,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                return {
+                    "url": url,
+                    "success": True,
+                    "status_code": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.text,
+                }
+            except httpx.TimeoutException as exc:
+                return {"url": url, "success": False, "error": "TimeoutException", "message": str(exc)}
+            except httpx.ConnectError as exc:
+                return {"url": url, "success": False, "error": "ConnectError", "message": str(exc)}
+            except httpx.HTTPStatusError as exc:
+                return {"url": url, "success": False, "error": "HTTPStatusError", "message": str(exc)}
+            except Exception as exc:
+                return {"url": url, "success": False, "error": "Exception", "message": str(exc)}
+
+    try:
+        tasks = [_request_one(url) for url in urls]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        return _success_response(results)
+    except Exception as exc:
+        logger.error("batch_http_request failed", exc_info=True)
+        return _error_response("Exception", str(exc))
+    finally:
+        logger.info("batch_http_request completed in %.2fs", time_module.perf_counter() - start)
+
+
 def main():
     """Run the MCP server."""
     mcp.run()
