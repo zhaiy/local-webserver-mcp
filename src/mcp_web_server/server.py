@@ -38,20 +38,37 @@ logger = logging.getLogger("mcp-web-server")
 
 
 # HTTP Client configuration
+DEFAULT_USER_AGENT = os.getenv(
+    "MCP_USER_AGENT",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+)
+DEFAULT_TIMEOUT = float(os.getenv("MCP_DEFAULT_TIMEOUT", "30"))
+
 HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": DEFAULT_USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
 
 HTTP_TRANSPORT = httpx.AsyncHTTPTransport(retries=2)
+HTTP_PROXIES: dict[str, str] = {}
+if os.getenv("MCP_HTTP_PROXY"):
+    HTTP_PROXIES["http://"] = os.environ["MCP_HTTP_PROXY"]
+if os.getenv("MCP_HTTPS_PROXY"):
+    HTTP_PROXIES["https://"] = os.environ["MCP_HTTPS_PROXY"]
+
+_HTTP_CLIENT_KWARGS: dict[str, Any] = {
+    "transport": HTTP_TRANSPORT,
+    "limits": httpx.Limits(max_keepalive_connections=10, max_connections=20),
+    "headers": HTTP_HEADERS,
+    "timeout": httpx.Timeout(DEFAULT_TIMEOUT, connect=10.0),
+    "follow_redirects": True,
+}
+if HTTP_PROXIES:
+    _HTTP_CLIENT_KWARGS["proxies"] = HTTP_PROXIES
 
 HTTP_CLIENT = httpx.AsyncClient(
-    transport=HTTP_TRANSPORT,
-    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-    headers=HTTP_HEADERS,
-    timeout=httpx.Timeout(30.0, connect=10.0),
-    follow_redirects=True,
+    **_HTTP_CLIENT_KWARGS,
 )
 
 
