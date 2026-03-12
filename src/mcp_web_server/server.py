@@ -10,6 +10,9 @@ Features:
 import asyncio
 import atexit
 import json
+import logging
+import os
+import time as time_module
 from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 import httpx
@@ -19,6 +22,10 @@ from ddgs import DDGS
 
 # Initialize the MCP server
 mcp = FastMCP("Web Server")
+
+LOG_LEVEL = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logger = logging.getLogger("mcp-web-server")
 
 
 # HTTP Client configuration
@@ -164,7 +171,10 @@ async def http_request(
         Dictionary containing status_code, headers, and body
     """
     merged_headers = {**HTTP_HEADERS, **(headers or {})}
+    start = time_module.perf_counter()
+    logger.info("http_request called", extra={"method": method.upper(), "url": url})
     try:
+        logger.debug("HTTP %s %s", method.upper(), url)
         response = await HTTP_CLIENT.request(
             method=method.upper(),
             url=url,
@@ -182,15 +192,22 @@ async def http_request(
             }
         )
     except httpx.TimeoutException as exc:
+        logger.error("http_request failed", exc_info=True)
         return _error_response("TimeoutException", str(exc))
     except httpx.ConnectError as exc:
+        logger.error("http_request failed", exc_info=True)
         return _error_response("ConnectError", str(exc))
     except httpx.HTTPStatusError as exc:
+        logger.error("http_request failed", exc_info=True)
         return _error_response("HTTPStatusError", str(exc))
     except json.JSONDecodeError as exc:
+        logger.error("http_request failed", exc_info=True)
         return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
+        logger.error("http_request failed", exc_info=True)
         return _error_response("Exception", str(exc))
+    finally:
+        logger.info("http_request completed in %.2fs", time_module.perf_counter() - start)
 
 
 @mcp.tool()
@@ -212,6 +229,8 @@ async def web_search(
     Returns:
         Unified response containing search results with title, url, and snippet
     """
+    start = time_module.perf_counter()
+    logger.info("web_search called", extra={"query": query, "num_results": num_results})
     try:
         def _search() -> list[dict[str, str]]:
             results: list[dict[str, str]] = []
@@ -238,15 +257,22 @@ async def web_search(
         results = await asyncio.to_thread(_search)
         return _success_response(results)
     except httpx.TimeoutException as exc:
+        logger.error("web_search failed", exc_info=True)
         return _error_response("TimeoutException", str(exc))
     except httpx.ConnectError as exc:
+        logger.error("web_search failed", exc_info=True)
         return _error_response("ConnectError", str(exc))
     except httpx.HTTPStatusError as exc:
+        logger.error("web_search failed", exc_info=True)
         return _error_response("HTTPStatusError", str(exc))
     except json.JSONDecodeError as exc:
+        logger.error("web_search failed", exc_info=True)
         return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
+        logger.error("web_search failed", exc_info=True)
         return _error_response("Exception", str(exc))
+    finally:
+        logger.info("web_search completed in %.2fs", time_module.perf_counter() - start)
 
 
 @mcp.tool()
@@ -266,7 +292,10 @@ async def extract_webpage_content(
     Returns:
         Dictionary containing title, text content, and optionally links
     """
+    start = time_module.perf_counter()
+    logger.info("extract_webpage_content called", extra={"url": url})
     try:
+        logger.debug("HTTP GET %s", url)
         response = await HTTP_CLIENT.get(url)
         response.raise_for_status()
 
@@ -318,15 +347,22 @@ async def extract_webpage_content(
 
         return _success_response(result)
     except httpx.TimeoutException as exc:
+        logger.error("extract_webpage_content failed", exc_info=True)
         return _error_response("TimeoutException", str(exc))
     except httpx.ConnectError as exc:
+        logger.error("extract_webpage_content failed", exc_info=True)
         return _error_response("ConnectError", str(exc))
     except httpx.HTTPStatusError as exc:
+        logger.error("extract_webpage_content failed", exc_info=True)
         return _error_response("HTTPStatusError", str(exc))
     except json.JSONDecodeError as exc:
+        logger.error("extract_webpage_content failed", exc_info=True)
         return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
+        logger.error("extract_webpage_content failed", exc_info=True)
         return _error_response("Exception", str(exc))
+    finally:
+        logger.info("extract_webpage_content completed in %.2fs", time_module.perf_counter() - start)
 
 
 @mcp.tool()
@@ -341,20 +377,30 @@ async def fetch_json(url: str, timeout: int = 30) -> dict:
     Returns:
         Parsed JSON data as a dictionary
     """
+    start = time_module.perf_counter()
+    logger.info("fetch_json called", extra={"url": url})
     try:
+        logger.debug("HTTP GET %s", url)
         response = await HTTP_CLIENT.get(url, timeout=timeout)
         response.raise_for_status()
         return _success_response(response.json())
     except httpx.TimeoutException as exc:
+        logger.error("fetch_json failed", exc_info=True)
         return _error_response("TimeoutException", str(exc))
     except httpx.ConnectError as exc:
+        logger.error("fetch_json failed", exc_info=True)
         return _error_response("ConnectError", str(exc))
     except httpx.HTTPStatusError as exc:
+        logger.error("fetch_json failed", exc_info=True)
         return _error_response("HTTPStatusError", str(exc))
     except json.JSONDecodeError as exc:
+        logger.error("fetch_json failed", exc_info=True)
         return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
+        logger.error("fetch_json failed", exc_info=True)
         return _error_response("Exception", str(exc))
+    finally:
+        logger.info("fetch_json completed in %.2fs", time_module.perf_counter() - start)
 
 
 def main():
