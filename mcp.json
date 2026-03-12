@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "web-server": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/zhaiyang/projects/mcp-web-server",
+        "python",
+        "run_server.py"
+      ]
+    }
+  }
+}
