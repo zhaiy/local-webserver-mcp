@@ -8,6 +8,7 @@ Features:
 """
 
 import asyncio
+import atexit
 import json
 from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
@@ -25,6 +26,32 @@ HTTP_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
+
+HTTP_CLIENT = httpx.AsyncClient(
+    limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+    headers=HTTP_HEADERS,
+    timeout=httpx.Timeout(30.0, connect=10.0),
+    follow_redirects=True,
+)
+
+
+async def _close_http_client() -> None:
+    if not HTTP_CLIENT.is_closed:
+        await HTTP_CLIENT.aclose()
+
+
+def _close_http_client_at_exit() -> None:
+    if HTTP_CLIENT.is_closed:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_close_http_client())
+    else:
+        loop.create_task(_close_http_client())
+
+
+atexit.register(_close_http_client_at_exit)
 
 
 def _success_response(data: Any) -> dict[str, Any]:
@@ -58,15 +85,14 @@ async def http_request(
     """
     merged_headers = {**HTTP_HEADERS, **(headers or {})}
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.request(
-                method=method.upper(),
-                url=url,
-                headers=merged_headers,
-                json=json_data,
-                timeout=timeout,
-            )
-            response.raise_for_status()
+        response = await HTTP_CLIENT.request(
+            method=method.upper(),
+            url=url,
+            headers=merged_headers,
+            json=json_data,
+            timeout=timeout,
+        )
+        response.raise_for_status()
 
         return _success_response(
             {
@@ -157,9 +183,8 @@ async def extract_webpage_content(
         Dictionary containing title, text content, and optionally links
     """
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=HTTP_HEADERS, timeout=30)
-            response.raise_for_status()
+        response = await HTTP_CLIENT.get(url)
+        response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -246,10 +271,9 @@ async def fetch_json(url: str, timeout: int = 30) -> dict:
         Parsed JSON data as a dictionary
     """
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=HTTP_HEADERS, timeout=timeout)
-            response.raise_for_status()
-            return _success_response(response.json())
+        response = await HTTP_CLIENT.get(url, timeout=timeout)
+        response.raise_for_status()
+        return _success_response(response.json())
     except httpx.TimeoutException as exc:
         return _error_response("TimeoutException", str(exc))
     except httpx.ConnectError as exc:

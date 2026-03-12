@@ -20,11 +20,7 @@ async def test_http_request_success_response_shape() -> None:
     mock_response.text = '{"ok": true}'
     mock_response.raise_for_status.return_value = None
 
-    with patch("mcp_web_server.server.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.request.return_value = mock_response
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-
+    with patch("mcp_web_server.server.HTTP_CLIENT.request", new=AsyncMock(return_value=mock_response)):
         result = await http_request("https://example.com")
 
     assert result["success"] is True
@@ -54,11 +50,7 @@ async def test_extract_webpage_content_http_status_error() -> None:
         response=response,
     )
 
-    with patch("mcp_web_server.server.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-
+    with patch("mcp_web_server.server.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
         result = await extract_webpage_content("https://example.com")
 
     assert result["success"] is False
@@ -71,11 +63,7 @@ async def test_fetch_json_json_decode_error() -> None:
     mock_response.raise_for_status.return_value = None
     mock_response.json.side_effect = json.JSONDecodeError("bad json", "x", 0)
 
-    with patch("mcp_web_server.server.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
-
+    with patch("mcp_web_server.server.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
         result = await fetch_json("https://example.com")
 
     assert result["success"] is False
