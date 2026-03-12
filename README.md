@@ -78,6 +78,18 @@ uv pip install -e ".[screenshot]"
 playwright install chromium
 ```
 
+## 可选 Web 配置界面
+
+项目内提供了一个基于 Flask 的辅助配置界面（`web_config.py` / `run_web_config.py`），用于通过浏览器引导执行 `claude mcp add`：
+
+```bash
+uv pip install -e ".[web]"
+uv run python run_web_config.py
+```
+
+打开 [http://localhost:5000](http://localhost:5000) 即可使用。  
+如果你只通过命令行配置 MCP，可忽略这两个文件。
+
 ## 架构图
 
 ```mermaid

@@ -127,16 +127,18 @@ async def test_web_search_and_extract_merges_content() -> None:
         {"title": "B", "url": "https://b.com", "snippet": "sb"},
     ]
 
-    async def mock_extract(url: str, include_links: bool = False, max_length: int = 10000) -> dict:
+    async def mock_extract(url: str, include_links: bool = False, max_length: int = 10000, **kwargs) -> dict:  # type: ignore[no-untyped-def]
         if "a.com" in url:
-            return {"success": True, "data": {"content": "content-a"}}
-        return {"success": False, "error": "HTTPStatusError", "message": "404"}
+            return {"url": url, "title": "", "content": "content-a", "headings": []}
+        request = httpx.Request("GET", url)
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("404", request=request, response=response)
 
     with patch(
-        "mcp_web_server.server.web_search",
-        new=AsyncMock(return_value={"success": True, "data": search_data}),
+        "mcp_web_server.server._web_search_impl",
+        new=AsyncMock(return_value=search_data),
     ):
-        with patch("mcp_web_server.server.extract_webpage_content", new=mock_extract):
+        with patch("mcp_web_server.server._extract_webpage_content_impl", new=mock_extract):
             result = await web_search_and_extract("query", num_results=2)
 
     assert result["success"] is True

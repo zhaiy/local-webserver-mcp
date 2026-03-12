@@ -10,6 +10,7 @@ Features:
 import asyncio
 import atexit
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -24,11 +25,15 @@ from ddgs import DDGS
 from mcp_web_server.models import ErrorResponse, HttpResponse, SearchResult, SuccessResponse, WebLink, WebpageContent
 
 try:
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
     HAS_PLAYWRIGHT = True
 except ImportError:
     async_playwright = None
+    PlaywrightError = None
+    PlaywrightTimeoutError = None
     HAS_PLAYWRIGHT = False
 
 # Initialize the MCP server
@@ -108,11 +113,13 @@ def _close_http_client_at_exit() -> None:
     if HTTP_CLIENT.is_closed:
         return
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
         asyncio.run(_close_http_client())
-    else:
-        loop.create_task(_close_http_client())
+    except RuntimeError:
+        # Fallback when no running event loop is available at process exit.
+        with contextlib.suppress(RuntimeError):
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_close_http_client())
+            loop.close()
 
 
 atexit.register(_close_http_client_at_exit)
@@ -142,33 +149,36 @@ def _validate_range(name: str, value: int, min_value: int, max_value: int) -> di
     return None
 
 
+def _handle_common_exception(tool_name: str, exc: Exception) -> dict[str, Any]:
+    logger.error("%s failed", tool_name, exc_info=True)
+    if isinstance(exc, httpx.TimeoutException):
+        return _error_response("TimeoutException", str(exc))
+    if isinstance(exc, httpx.ConnectError):
+        return _error_response("ConnectError", str(exc))
+    if isinstance(exc, httpx.HTTPStatusError):
+        return _error_response("HTTPStatusError", str(exc))
+    if isinstance(exc, json.JSONDecodeError):
+        return _error_response("JSONDecodeError", str(exc))
+    return _error_response("Exception", str(exc))
+
+
 def _extract_content_blocks(content_tag: Tag) -> tuple[list[str], list[str]]:
     blocks: list[str] = []
     headings: list[str] = []
-    processed_ids: set[int] = set()
 
-    for element in content_tag.descendants:
-        if not isinstance(element, Tag):
-            continue
-        if id(element) in processed_ids:
-            continue
-        if any(id(parent) in processed_ids for parent in element.parents if isinstance(parent, Tag)):
-            continue
-
+    def _consume_block(element: Tag) -> bool:
         if element.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             text = element.get_text(" ", strip=True)
             if text:
                 headings.append(text)
                 blocks.append(f"## {text}")
-                processed_ids.add(id(element))
-            continue
+            return True
 
         if element.name == "p":
             text = element.get_text(" ", strip=True)
             if text:
                 blocks.append(text)
-                processed_ids.add(id(element))
-            continue
+            return True
 
         if element.name in {"ul", "ol"}:
             items = [
@@ -178,8 +188,7 @@ def _extract_content_blocks(content_tag: Tag) -> tuple[list[str], list[str]]:
             ]
             for item in items:
                 blocks.append(f"- {item}")
-            processed_ids.add(id(element))
-            continue
+            return True
 
         if element.name == "table":
             table_rows: list[str] = []
@@ -190,32 +199,125 @@ def _extract_content_blocks(content_tag: Tag) -> tuple[list[str], list[str]]:
                     table_rows.append(" | ".join(cells))
             if table_rows:
                 blocks.extend(table_rows)
-            processed_ids.add(id(element))
-            continue
+            return True
 
         if element.name == "pre":
             code_text = element.get_text("\n", strip=True)
             if code_text:
                 blocks.append(f"```\n{code_text}\n```")
-            processed_ids.add(id(element))
-            continue
+            return True
 
         if element.name == "code":
             if isinstance(element.parent, Tag) and element.parent.name == "pre":
-                continue
+                return False
             code_text = element.get_text(" ", strip=True)
             if code_text:
                 blocks.append(f"```\n{code_text}\n```")
-                processed_ids.add(id(element))
-            continue
+            return True
 
         if element.name == "blockquote":
             quote_text = element.get_text(" ", strip=True)
             if quote_text:
                 blocks.append(f"> {quote_text}")
-                processed_ids.add(id(element))
+            return True
+
+        return False
+
+    def _walk(node: Tag) -> None:
+        for child in node.children:
+            if not isinstance(child, Tag):
+                continue
+            if _consume_block(child):
+                continue
+            _walk(child)
+
+    _walk(content_tag)
 
     return blocks, headings
+
+
+async def _web_search_impl(
+    query: str,
+    num_results: int,
+    region: str,
+    time: str,
+    apply_rate_limit: bool = True,
+) -> list[dict[str, str]]:
+    if apply_rate_limit:
+        await SEARCH_RATE_LIMITER.acquire()
+
+    def _search() -> list[dict[str, str]]:
+        results: list[dict[str, str]] = []
+        with DDGS() as ddgs:
+            ddg_results = list(
+                ddgs.text(
+                    query,
+                    region=region,
+                    safesearch="off",
+                    time=time,
+                    max_results=num_results,
+                )
+            )
+            for result in ddg_results:
+                results.append(
+                    SearchResult(
+                        title=result.get("title", ""),
+                        url=result.get("href", ""),
+                        snippet=result.get("body", ""),
+                    ).model_dump()
+                )
+        return results
+
+    return await asyncio.to_thread(_search)
+
+
+async def _extract_webpage_content_impl(
+    url: str,
+    include_links: bool,
+    max_length: int,
+    apply_rate_limit: bool = True,
+) -> dict[str, Any]:
+    if apply_rate_limit:
+        await EXTRACT_RATE_LIMITER.acquire()
+    logger.debug("HTTP GET %s", url)
+    response = await HTTP_CLIENT.get(url)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    for element in soup(["script", "style", "nav", "header", "footer", "noscript"]):
+        element.decompose()
+
+    title = ""
+    if soup.title:
+        title = soup.title.string or ""
+
+    main_tag = soup.find("main") or soup.find("article") or soup.find("div", class_=["content", "article", "post"])
+    content_tag = main_tag if main_tag else soup.find("body") or soup
+
+    main_content, headings = _extract_content_blocks(content_tag)
+
+    links = []
+    if include_links:
+        for a in content_tag.find_all("a", href=True):
+            text = a.get_text(strip=True)
+            href = a["href"]
+            if text and href.startswith("http"):
+                links.append({"text": text, "url": href})
+
+    text_content = "\n\n".join(main_content)
+    if len(text_content) > max_length:
+        text_content = text_content[:max_length] + "..."
+
+    webpage_data: dict[str, Any] = {
+        "url": url,
+        "title": title,
+        "content": text_content,
+        "headings": headings[:20],
+    }
+    if include_links:
+        webpage_data["links"] = [WebLink(text=link["text"], url=link["url"]) for link in links[:50]]
+    return WebpageContent(**webpage_data).model_dump()
 
 
 @mcp.tool()
@@ -259,7 +361,6 @@ async def http_request(
             json=json_data,
             timeout=timeout,
         )
-        response.raise_for_status()
 
         return _success_response(
             HttpResponse(
@@ -268,21 +369,8 @@ async def http_request(
                 body=response.text,
             ).model_dump()
         )
-    except httpx.TimeoutException as exc:
-        logger.error("http_request failed", exc_info=True)
-        return _error_response("TimeoutException", str(exc))
-    except httpx.ConnectError as exc:
-        logger.error("http_request failed", exc_info=True)
-        return _error_response("ConnectError", str(exc))
-    except httpx.HTTPStatusError as exc:
-        logger.error("http_request failed", exc_info=True)
-        return _error_response("HTTPStatusError", str(exc))
-    except json.JSONDecodeError as exc:
-        logger.error("http_request failed", exc_info=True)
-        return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
-        logger.error("http_request failed", exc_info=True)
-        return _error_response("Exception", str(exc))
+        return _handle_common_exception("http_request", exc)
     finally:
         logger.info("http_request completed in %.2fs", time_module.perf_counter() - start)
 
@@ -312,46 +400,16 @@ async def web_search(
     if num_results_error:
         return num_results_error
     try:
-        await SEARCH_RATE_LIMITER.acquire()
-        def _search() -> list[dict[str, str]]:
-            results: list[dict[str, str]] = []
-            with DDGS() as ddgs:
-                ddg_results = list(
-                    ddgs.text(
-                        query,
-                        region=region,
-                        safesearch="off",
-                        time=time,
-                        max_results=num_results,
-                    )
-                )
-                for result in ddg_results:
-                    results.append(
-                        SearchResult(
-                            title=result.get("title", ""),
-                            url=result.get("href", ""),
-                            snippet=result.get("body", ""),
-                        ).model_dump()
-                    )
-            return results
-
-        results = await asyncio.to_thread(_search)
+        results = await _web_search_impl(
+            query=query,
+            num_results=num_results,
+            region=region,
+            time=time,
+            apply_rate_limit=True,
+        )
         return _success_response(results)
-    except httpx.TimeoutException as exc:
-        logger.error("web_search failed", exc_info=True)
-        return _error_response("TimeoutException", str(exc))
-    except httpx.ConnectError as exc:
-        logger.error("web_search failed", exc_info=True)
-        return _error_response("ConnectError", str(exc))
-    except httpx.HTTPStatusError as exc:
-        logger.error("web_search failed", exc_info=True)
-        return _error_response("HTTPStatusError", str(exc))
-    except json.JSONDecodeError as exc:
-        logger.error("web_search failed", exc_info=True)
-        return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
-        logger.error("web_search failed", exc_info=True)
-        return _error_response("Exception", str(exc))
+        return _handle_common_exception("web_search", exc)
     finally:
         logger.info("web_search completed in %.2fs", time_module.perf_counter() - start)
 
@@ -381,75 +439,15 @@ async def extract_webpage_content(
     if max_length_error:
         return max_length_error
     try:
-        await EXTRACT_RATE_LIMITER.acquire()
-        logger.debug("HTTP GET %s", url)
-        response = await HTTP_CLIENT.get(url)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Remove script, style, nav, header, footer elements
-        for element in soup(["script", "style", "nav", "header", "footer", "noscript"]):
-            element.decompose()
-
-        # Extract title
-        title = ""
-        if soup.title:
-            title = soup.title.string or ""
-
-        # Try to find main article content
-        main_tag = soup.find("main") or soup.find("article") or soup.find("div", class_=["content", "article", "post"])
-
-        if main_tag:
-            content_tag = main_tag
-        else:
-            content_tag = soup.find("body") or soup
-
-        # Extract headings + paragraphs + lists + tables + code + blockquote in DOM order.
-        main_content, headings = _extract_content_blocks(content_tag)
-
-        # Extract links if requested
-        links = []
-        if include_links:
-            for a in content_tag.find_all("a", href=True):
-                text = a.get_text(strip=True)
-                href = a["href"]
-                if text and href.startswith("http"):
-                    links.append({"text": text, "url": href})
-
-        # Combine text content
-        text_content = "\n\n".join(main_content)
-        if len(text_content) > max_length:
-            text_content = text_content[:max_length] + "..."
-
-        webpage_data: dict[str, Any] = {
-            "url": url,
-            "title": title,
-            "content": text_content,
-            "headings": headings[:20],  # Limit headings
-        }
-
-        if include_links:
-            webpage_data["links"] = [
-                WebLink(text=link["text"], url=link["url"]) for link in links[:50]
-            ]
-
-        return _success_response(WebpageContent(**webpage_data).model_dump())
-    except httpx.TimeoutException as exc:
-        logger.error("extract_webpage_content failed", exc_info=True)
-        return _error_response("TimeoutException", str(exc))
-    except httpx.ConnectError as exc:
-        logger.error("extract_webpage_content failed", exc_info=True)
-        return _error_response("ConnectError", str(exc))
-    except httpx.HTTPStatusError as exc:
-        logger.error("extract_webpage_content failed", exc_info=True)
-        return _error_response("HTTPStatusError", str(exc))
-    except json.JSONDecodeError as exc:
-        logger.error("extract_webpage_content failed", exc_info=True)
-        return _error_response("JSONDecodeError", str(exc))
+        data = await _extract_webpage_content_impl(
+            url=url,
+            include_links=include_links,
+            max_length=max_length,
+            apply_rate_limit=True,
+        )
+        return _success_response(data)
     except Exception as exc:
-        logger.error("extract_webpage_content failed", exc_info=True)
-        return _error_response("Exception", str(exc))
+        return _handle_common_exception("extract_webpage_content", exc)
     finally:
         logger.info("extract_webpage_content completed in %.2fs", time_module.perf_counter() - start)
 
@@ -474,25 +472,13 @@ async def fetch_json(url: str, timeout: int = 30) -> dict:
     if timeout_error:
         return timeout_error
     try:
+        await HTTP_RATE_LIMITER.acquire()
         logger.debug("HTTP GET %s", url)
         response = await HTTP_CLIENT.get(url, timeout=timeout)
         response.raise_for_status()
         return _success_response(response.json())
-    except httpx.TimeoutException as exc:
-        logger.error("fetch_json failed", exc_info=True)
-        return _error_response("TimeoutException", str(exc))
-    except httpx.ConnectError as exc:
-        logger.error("fetch_json failed", exc_info=True)
-        return _error_response("ConnectError", str(exc))
-    except httpx.HTTPStatusError as exc:
-        logger.error("fetch_json failed", exc_info=True)
-        return _error_response("HTTPStatusError", str(exc))
-    except json.JSONDecodeError as exc:
-        logger.error("fetch_json failed", exc_info=True)
-        return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
-        logger.error("fetch_json failed", exc_info=True)
-        return _error_response("Exception", str(exc))
+        return _handle_common_exception("fetch_json", exc)
     finally:
         logger.info("fetch_json completed in %.2fs", time_module.perf_counter() - start)
 
@@ -525,19 +511,38 @@ async def web_search_and_extract(
     if max_length_error:
         return max_length_error
     try:
-        search_response = await web_search(
+        await SEARCH_RATE_LIMITER.acquire()
+        search_results = await _web_search_impl(
             query=query,
             num_results=num_results,
             region=region,
+            time="y",
+            apply_rate_limit=False,
         )
-        if not search_response.get("success"):
-            return search_response
-
-        search_results = search_response.get("data", [])[:num_results]
+        search_results = search_results[:num_results]
 
         async def _extract_item(item: dict[str, str]) -> dict[str, Any]:
             url = item.get("url", "")
-            extract_response = await extract_webpage_content(url=url, max_length=max_content_length)
+            try:
+                extracted_data = await _extract_webpage_content_impl(
+                    url=url,
+                    include_links=False,
+                    max_length=max_content_length,
+                    apply_rate_limit=False,
+                )
+                extract_response: dict[str, Any] = {"success": True, "data": extracted_data}
+            except Exception as exc:
+                logger.error("extract_webpage_content failed", exc_info=True)
+                if isinstance(exc, httpx.TimeoutException):
+                    extract_response = _error_response("TimeoutException", str(exc))
+                elif isinstance(exc, httpx.ConnectError):
+                    extract_response = _error_response("ConnectError", str(exc))
+                elif isinstance(exc, httpx.HTTPStatusError):
+                    extract_response = _error_response("HTTPStatusError", str(exc))
+                elif isinstance(exc, json.JSONDecodeError):
+                    extract_response = _error_response("JSONDecodeError", str(exc))
+                else:
+                    extract_response = _error_response(type(exc).__name__, str(exc))
 
             merged_item: dict[str, Any] = {
                 "title": item.get("title", ""),
@@ -554,6 +559,8 @@ async def web_search_and_extract(
                 }
             return merged_item
 
+        if search_results:
+            await EXTRACT_RATE_LIMITER.acquire()
         tasks = [_extract_item(item) for item in search_results]
         extracted_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -576,21 +583,8 @@ async def web_search_and_extract(
                 merged_results.append(extracted)
 
         return _success_response({"query": query, "results": merged_results})
-    except httpx.TimeoutException as exc:
-        logger.error("web_search_and_extract failed", exc_info=True)
-        return _error_response("TimeoutException", str(exc))
-    except httpx.ConnectError as exc:
-        logger.error("web_search_and_extract failed", exc_info=True)
-        return _error_response("ConnectError", str(exc))
-    except httpx.HTTPStatusError as exc:
-        logger.error("web_search_and_extract failed", exc_info=True)
-        return _error_response("HTTPStatusError", str(exc))
-    except json.JSONDecodeError as exc:
-        logger.error("web_search_and_extract failed", exc_info=True)
-        return _error_response("JSONDecodeError", str(exc))
     except Exception as exc:
-        logger.error("web_search_and_extract failed", exc_info=True)
-        return _error_response("Exception", str(exc))
+        return _handle_common_exception("web_search_and_extract", exc)
     finally:
         logger.info("web_search_and_extract completed in %.2fs", time_module.perf_counter() - start)
 
@@ -690,7 +684,16 @@ if HAS_PLAYWRIGHT:
         """
         start = time_module.perf_counter()
         logger.info("screenshot_webpage called", extra={"url": url})
+        if not validate_url(url):
+            return _error_response("ValidationError", "url must be a valid http/https URL")
+        width_error = _validate_range("width", width, 320, 7680)
+        if width_error:
+            return width_error
+        height_error = _validate_range("height", height, 240, 4320)
+        if height_error:
+            return height_error
         try:
+            await EXTRACT_RATE_LIMITER.acquire()
             assert async_playwright is not None
             async with async_playwright() as p:
                 browser = await p.chromium.launch()
@@ -707,18 +710,12 @@ if HAS_PLAYWRIGHT:
                     "height": height,
                 }
             )
-        except httpx.TimeoutException as exc:
+        except PlaywrightTimeoutError as exc:  # type: ignore[misc]
             logger.error("screenshot_webpage failed", exc_info=True)
-            return _error_response("TimeoutException", str(exc))
-        except httpx.ConnectError as exc:
+            return _error_response("TimeoutError", str(exc))
+        except PlaywrightError as exc:  # type: ignore[misc]
             logger.error("screenshot_webpage failed", exc_info=True)
-            return _error_response("ConnectError", str(exc))
-        except httpx.HTTPStatusError as exc:
-            logger.error("screenshot_webpage failed", exc_info=True)
-            return _error_response("HTTPStatusError", str(exc))
-        except json.JSONDecodeError as exc:
-            logger.error("screenshot_webpage failed", exc_info=True)
-            return _error_response("JSONDecodeError", str(exc))
+            return _error_response("PlaywrightError", str(exc))
         except Exception as exc:
             logger.error("screenshot_webpage failed", exc_info=True)
             return _error_response("Exception", str(exc))
