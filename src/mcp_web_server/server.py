@@ -15,6 +15,7 @@ import logging
 import os
 import time as time_module
 from typing import Any, Optional
+from urllib.parse import urlparse
 from mcp.server.fastmcp import FastMCP
 import httpx
 from bs4 import BeautifulSoup
@@ -91,6 +92,8 @@ def _close_http_client_at_exit() -> None:
 
 atexit.register(_close_http_client_at_exit)
 
+ALLOWED_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+
 
 def _success_response(data: Any) -> dict[str, Any]:
     return SuccessResponse(data=data).model_dump()
@@ -98,6 +101,20 @@ def _success_response(data: Any) -> dict[str, Any]:
 
 def _error_response(error_type: str, message: str) -> dict[str, Any]:
     return ErrorResponse(error=error_type, message=message).model_dump()
+
+
+def validate_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def _validate_range(name: str, value: int, min_value: int, max_value: int) -> dict[str, Any] | None:
+    if not (min_value <= value <= max_value):
+        return _error_response(
+            "ValidationError",
+            f"{name} must be between {min_value} and {max_value}",
+        )
+    return None
 
 
 def _extract_content_blocks(content_tag: Tag) -> tuple[list[str], list[str]]:
@@ -200,6 +217,13 @@ async def http_request(
     merged_headers = {**HTTP_HEADERS, **(headers or {})}
     start = time_module.perf_counter()
     logger.info("http_request called", extra={"method": method.upper(), "url": url})
+    if not validate_url(url):
+        return _error_response("ValidationError", "url must be a valid http/https URL")
+    if method.upper() not in ALLOWED_METHODS:
+        return _error_response("ValidationError", "method is not allowed")
+    timeout_error = _validate_range("timeout", timeout, 1, 120)
+    if timeout_error:
+        return timeout_error
     try:
         logger.debug("HTTP %s %s", method.upper(), url)
         response = await HTTP_CLIENT.request(
@@ -258,6 +282,9 @@ async def web_search(
     """
     start = time_module.perf_counter()
     logger.info("web_search called", extra={"query": query, "num_results": num_results})
+    num_results_error = _validate_range("num_results", num_results, 1, 50)
+    if num_results_error:
+        return num_results_error
     try:
         def _search() -> list[dict[str, str]]:
             results: list[dict[str, str]] = []
@@ -321,6 +348,11 @@ async def extract_webpage_content(
     """
     start = time_module.perf_counter()
     logger.info("extract_webpage_content called", extra={"url": url})
+    if not validate_url(url):
+        return _error_response("ValidationError", "url must be a valid http/https URL")
+    max_length_error = _validate_range("max_length", max_length, 100, 100000)
+    if max_length_error:
+        return max_length_error
     try:
         logger.debug("HTTP GET %s", url)
         response = await HTTP_CLIENT.get(url)
@@ -408,6 +440,11 @@ async def fetch_json(url: str, timeout: int = 30) -> dict:
     """
     start = time_module.perf_counter()
     logger.info("fetch_json called", extra={"url": url})
+    if not validate_url(url):
+        return _error_response("ValidationError", "url must be a valid http/https URL")
+    timeout_error = _validate_range("timeout", timeout, 1, 120)
+    if timeout_error:
+        return timeout_error
     try:
         logger.debug("HTTP GET %s", url)
         response = await HTTP_CLIENT.get(url, timeout=timeout)
@@ -453,6 +490,12 @@ async def web_search_and_extract(
     """
     start = time_module.perf_counter()
     logger.info("web_search_and_extract called", extra={"query": query, "num_results": num_results})
+    num_results_error = _validate_range("num_results", num_results, 1, 50)
+    if num_results_error:
+        return num_results_error
+    max_length_error = _validate_range("max_content_length", max_content_length, 100, 100000)
+    if max_length_error:
+        return max_length_error
     try:
         search_response = await web_search(
             query=query,
@@ -550,6 +593,17 @@ async def batch_http_request(
         "batch_http_request called",
         extra={"url_count": len(urls), "method": method.upper(), "max_concurrent": max_concurrent},
     )
+    if method.upper() not in ALLOWED_METHODS:
+        return _error_response("ValidationError", "method is not allowed")
+    timeout_error = _validate_range("timeout", timeout, 1, 120)
+    if timeout_error:
+        return timeout_error
+    concurrency_error = _validate_range("max_concurrent", max_concurrent, 1, 20)
+    if concurrency_error:
+        return concurrency_error
+    for url in urls:
+        if not validate_url(url):
+            return _error_response("ValidationError", "all urls must be valid http/https URLs")
     semaphore = asyncio.Semaphore(max_concurrent)
     merged_headers = {**HTTP_HEADERS, **(headers or {})}
 
