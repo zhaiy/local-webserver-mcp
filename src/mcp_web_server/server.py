@@ -28,7 +28,10 @@ HTTP_HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
+HTTP_TRANSPORT = httpx.AsyncHTTPTransport(retries=2)
+
 HTTP_CLIENT = httpx.AsyncClient(
+    transport=HTTP_TRANSPORT,
     limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
     headers=HTTP_HEADERS,
     timeout=httpx.Timeout(30.0, connect=10.0),
