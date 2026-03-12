@@ -14,6 +14,7 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 import httpx
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 from ddgs import DDGS
 
 # Initialize the MCP server
@@ -60,6 +61,82 @@ def _success_response(data: Any) -> dict[str, Any]:
 
 def _error_response(error_type: str, message: str) -> dict[str, Any]:
     return {"success": False, "error": error_type, "message": message}
+
+
+def _extract_content_blocks(content_tag: Tag) -> tuple[list[str], list[str]]:
+    blocks: list[str] = []
+    headings: list[str] = []
+    processed_ids: set[int] = set()
+
+    for element in content_tag.descendants:
+        if not isinstance(element, Tag):
+            continue
+        if id(element) in processed_ids:
+            continue
+        if any(id(parent) in processed_ids for parent in element.parents if isinstance(parent, Tag)):
+            continue
+
+        if element.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            text = element.get_text(" ", strip=True)
+            if text:
+                headings.append(text)
+                blocks.append(f"## {text}")
+                processed_ids.add(id(element))
+            continue
+
+        if element.name == "p":
+            text = element.get_text(" ", strip=True)
+            if text:
+                blocks.append(text)
+                processed_ids.add(id(element))
+            continue
+
+        if element.name in {"ul", "ol"}:
+            items = [
+                li.get_text(" ", strip=True)
+                for li in element.find_all("li")
+                if li.get_text(" ", strip=True)
+            ]
+            for item in items:
+                blocks.append(f"- {item}")
+            processed_ids.add(id(element))
+            continue
+
+        if element.name == "table":
+            table_rows: list[str] = []
+            for tr in element.find_all("tr"):
+                cells = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+                cells = [cell for cell in cells if cell]
+                if cells:
+                    table_rows.append(" | ".join(cells))
+            if table_rows:
+                blocks.extend(table_rows)
+            processed_ids.add(id(element))
+            continue
+
+        if element.name == "pre":
+            code_text = element.get_text("\n", strip=True)
+            if code_text:
+                blocks.append(f"```\n{code_text}\n```")
+            processed_ids.add(id(element))
+            continue
+
+        if element.name == "code":
+            if isinstance(element.parent, Tag) and element.parent.name == "pre":
+                continue
+            code_text = element.get_text(" ", strip=True)
+            if code_text:
+                blocks.append(f"```\n{code_text}\n```")
+                processed_ids.add(id(element))
+            continue
+
+        if element.name == "blockquote":
+            quote_text = element.get_text(" ", strip=True)
+            if quote_text:
+                blocks.append(f"> {quote_text}")
+                processed_ids.add(id(element))
+
+    return blocks, headings
 
 
 @mcp.tool()
@@ -201,9 +278,6 @@ async def extract_webpage_content(
         if soup.title:
             title = soup.title.string or ""
 
-        # Extract main content
-        main_content = []
-
         # Try to find main article content
         main_tag = soup.find("main") or soup.find("article") or soup.find("div", class_=["content", "article", "post"])
 
@@ -212,18 +286,8 @@ async def extract_webpage_content(
         else:
             content_tag = soup.find("body") or soup
 
-        # Extract paragraphs
-        for p in content_tag.find_all("p", recursive=True):
-            text = p.get_text(strip=True)
-            if text and len(text) > 10:
-                main_content.append(text)
-
-        # Extract headings
-        headings = []
-        for h in content_tag.find_all(["h1", "h2", "h3"], recursive=True):
-            text = h.get_text(strip=True)
-            if text:
-                headings.append(text)
+        # Extract headings + paragraphs + lists + tables + code + blockquote in DOM order.
+        main_content, headings = _extract_content_blocks(content_tag)
 
         # Extract links if requested
         links = []

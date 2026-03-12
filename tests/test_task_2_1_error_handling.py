@@ -81,3 +81,38 @@ async def test_fetch_json_json_decode_error() -> None:
 
     assert result["success"] is False
     assert result["error"] == "JSONDecodeError"
+
+
+@pytest.mark.asyncio
+async def test_extract_webpage_content_supports_rich_tags_in_dom_order() -> None:
+    html = """
+    <html>
+      <head><title>Example</title></head>
+      <body>
+        <main>
+          <h1>Heading One</h1>
+          <p>First paragraph.</p>
+          <ul><li>Item A</li><li>Item B</li></ul>
+          <blockquote>Quoted text</blockquote>
+          <table><tr><th>K</th><th>V</th></tr><tr><td>a</td><td>1</td></tr></table>
+          <pre><code>print("hi")</code></pre>
+        </main>
+      </body>
+    </html>
+    """
+    mock_response = MagicMock()
+    mock_response.text = html
+    mock_response.raise_for_status.return_value = None
+
+    with patch("mcp_web_server.server.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+        result = await extract_webpage_content("https://example.com")
+
+    assert result["success"] is True
+    content = result["data"]["content"]
+    assert "## Heading One" in content
+    assert "First paragraph." in content
+    assert "- Item A" in content
+    assert "> Quoted text" in content
+    assert "K | V" in content
+    assert "```\nprint(\"hi\")\n```" in content
+    assert content.index("## Heading One") < content.index("First paragraph.")
