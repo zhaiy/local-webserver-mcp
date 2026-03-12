@@ -114,7 +114,7 @@ async def http_request(
 
 
 @mcp.tool()
-def web_search(
+async def web_search(
     query: str,
     num_results: int = 10,
     region: str = "wt-wt",
@@ -130,28 +130,32 @@ def web_search(
         time: Time filter - d (day), w (week), m (month), y (year)
 
     Returns:
-        List of search results with title, url, and snippet
+        Unified response containing search results with title, url, and snippet
     """
     try:
-        results = []
-        with DDGS() as ddgs:
-            ddg_results = list(
-                ddgs.text(
-                    query,
-                    region=region,
-                    safesearch="off",
-                    time=time,
-                    max_results=num_results,
+        def _search() -> list[dict[str, str]]:
+            results: list[dict[str, str]] = []
+            with DDGS() as ddgs:
+                ddg_results = list(
+                    ddgs.text(
+                        query,
+                        region=region,
+                        safesearch="off",
+                        time=time,
+                        max_results=num_results,
+                    )
                 )
-            )
-            for result in ddg_results:
-                results.append(
-                    {
-                        "title": result.get("title", ""),
-                        "url": result.get("href", ""),
-                        "snippet": result.get("body", ""),
-                    }
-                )
+                for result in ddg_results:
+                    results.append(
+                        {
+                            "title": result.get("title", ""),
+                            "url": result.get("href", ""),
+                            "snippet": result.get("body", ""),
+                        }
+                    )
+            return results
+
+        results = await asyncio.to_thread(_search)
         return _success_response(results)
     except httpx.TimeoutException as exc:
         return _error_response("TimeoutException", str(exc))

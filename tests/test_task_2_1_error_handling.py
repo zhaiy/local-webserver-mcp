@@ -28,15 +28,28 @@ async def test_http_request_success_response_shape() -> None:
     assert result["data"]["body"] == '{"ok": true}'
 
 
-def test_web_search_error_response_shape() -> None:
+@pytest.mark.asyncio
+async def test_web_search_error_response_shape() -> None:
     with patch("mcp_web_server.server.DDGS", side_effect=RuntimeError("boom")):
-        result = web_search("python")
+        result = await web_search("python")
 
     assert result == {
         "success": False,
         "error": "Exception",
         "message": "boom",
     }
+
+
+@pytest.mark.asyncio
+async def test_web_search_uses_to_thread() -> None:
+    expected_data = [{"title": "t", "url": "u", "snippet": "s"}]
+    to_thread_mock = AsyncMock(return_value=expected_data)
+    with patch("mcp_web_server.server.asyncio.to_thread", to_thread_mock):
+        result = await web_search("python")
+
+    to_thread_mock.assert_awaited_once()
+    assert result["success"] is True
+    assert result["data"] == expected_data
 
 
 @pytest.mark.asyncio
