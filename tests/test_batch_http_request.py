@@ -16,7 +16,7 @@ async def test_batch_http_request_empty_url_list() -> None:
 @pytest.mark.asyncio
 async def test_batch_http_request_all_timeout() -> None:
     with patch(
-        "mcp_web_server.server.HTTP_CLIENT.request",
+        "mcp_web_server.tools.http.HTTP_CLIENT.request",
         new=AsyncMock(side_effect=httpx.TimeoutException("timeout")),
     ):
         result = await batch_http_request(
@@ -52,7 +52,7 @@ async def test_batch_http_request_partial_success_partial_failure() -> None:
             return ok_response
         return bad_response
 
-    with patch("mcp_web_server.server.HTTP_CLIENT.request", new=AsyncMock(side_effect=mock_request)):
+    with patch("mcp_web_server.tools.http.HTTP_CLIENT.request", new=AsyncMock(side_effect=mock_request)):
         result = await batch_http_request(["https://ok.example", "https://bad.example"])
 
     assert result["success"] is True

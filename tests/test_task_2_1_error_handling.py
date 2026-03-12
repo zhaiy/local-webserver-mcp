@@ -22,7 +22,7 @@ async def test_http_request_success_response_shape() -> None:
     mock_response.text = '{"ok": true}'
     mock_response.raise_for_status.return_value = None
 
-    with patch("mcp_web_server.server.HTTP_CLIENT.request", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.http.HTTP_CLIENT.request", new=AsyncMock(return_value=mock_response)):
         result = await http_request("https://example.com")
 
     assert result["success"] is True
@@ -32,7 +32,7 @@ async def test_http_request_success_response_shape() -> None:
 
 @pytest.mark.asyncio
 async def test_web_search_error_response_shape() -> None:
-    with patch("mcp_web_server.server.DDGS", side_effect=RuntimeError("boom")):
+    with patch("mcp_web_server.tools.search.DDGS", side_effect=RuntimeError("boom")):
         result = await web_search("python")
 
     assert result == {
@@ -46,7 +46,7 @@ async def test_web_search_error_response_shape() -> None:
 async def test_web_search_uses_to_thread() -> None:
     expected_data = [{"title": "t", "url": "u", "snippet": "s"}]
     to_thread_mock = AsyncMock(return_value=expected_data)
-    with patch("mcp_web_server.server.asyncio.to_thread", to_thread_mock):
+    with patch("mcp_web_server.tools.search.asyncio.to_thread", to_thread_mock):
         result = await web_search("python")
 
     to_thread_mock.assert_awaited_once()
@@ -65,7 +65,7 @@ async def test_extract_webpage_content_http_status_error() -> None:
         response=response,
     )
 
-    with patch("mcp_web_server.server.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.extract.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
         result = await extract_webpage_content("https://example.com")
 
     assert result["success"] is False
@@ -78,7 +78,7 @@ async def test_fetch_json_json_decode_error() -> None:
     mock_response.raise_for_status.return_value = None
     mock_response.json.side_effect = json.JSONDecodeError("bad json", "x", 0)
 
-    with patch("mcp_web_server.server.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.http.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
         result = await fetch_json("https://example.com")
 
     assert result["success"] is False
@@ -106,7 +106,7 @@ async def test_extract_webpage_content_supports_rich_tags_in_dom_order() -> None
     mock_response.text = html
     mock_response.raise_for_status.return_value = None
 
-    with patch("mcp_web_server.server.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.extract.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
         result = await extract_webpage_content("https://example.com")
 
     assert result["success"] is True
@@ -135,10 +135,10 @@ async def test_web_search_and_extract_merges_content() -> None:
         raise httpx.HTTPStatusError("404", request=request, response=response)
 
     with patch(
-        "mcp_web_server.server._web_search_impl",
+        "mcp_web_server.tools.search._web_search_impl",
         new=AsyncMock(return_value=search_data),
     ):
-        with patch("mcp_web_server.server._extract_webpage_content_impl", new=mock_extract):
+        with patch("mcp_web_server.tools.search._extract_webpage_content_impl", new=mock_extract):
             result = await web_search_and_extract("query", num_results=2)
 
     assert result["success"] is True
@@ -170,7 +170,7 @@ async def test_batch_http_request_returns_per_url_results() -> None:
             return ok_response
         return bad_response
 
-    with patch("mcp_web_server.server.HTTP_CLIENT.request", new=AsyncMock(side_effect=mock_request)):
+    with patch("mcp_web_server.tools.http.HTTP_CLIENT.request", new=AsyncMock(side_effect=mock_request)):
         result = await batch_http_request(["https://ok.example", "https://bad.example"])
 
     assert result["success"] is True

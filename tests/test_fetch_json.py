@@ -72,7 +72,7 @@ async def test_fetch_json_applies_http_rate_limit(mock_httpx_client: dict) -> No
     mock_httpx_client["get"].return_value = _json_response({"ok": True})
     acquire_mock = AsyncMock()
 
-    with patch("mcp_web_server.server.HTTP_RATE_LIMITER.acquire", acquire_mock):
+    with patch("mcp_web_server.tools.http.HTTP_RATE_LIMITER.acquire", acquire_mock):
         result = await fetch_json("https://example.com/data.json")
 
     assert result["success"] is True

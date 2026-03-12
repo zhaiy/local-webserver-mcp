@@ -9,7 +9,7 @@ from mcp_web_server.server import web_search_and_extract
 @pytest.mark.asyncio
 async def test_web_search_and_extract_no_search_results() -> None:
     with patch(
-        "mcp_web_server.server._web_search_impl",
+        "mcp_web_server.tools.search._web_search_impl",
         new=AsyncMock(return_value=[]),
     ):
         result = await web_search_and_extract("query", num_results=3)
@@ -27,13 +27,13 @@ async def test_web_search_and_extract_all_extract_failed() -> None:
     ]
 
     with patch(
-        "mcp_web_server.server._web_search_impl",
+        "mcp_web_server.tools.search._web_search_impl",
         new=AsyncMock(return_value=search_data),
     ):
         request = httpx.Request("GET", "https://a.example")
         response = httpx.Response(404, request=request)
         with patch(
-            "mcp_web_server.server._extract_webpage_content_impl",
+            "mcp_web_server.tools.search._extract_webpage_content_impl",
             new=AsyncMock(side_effect=httpx.HTTPStatusError("404", request=request, response=response)),
         ):
             result = await web_search_and_extract("query", num_results=2)
@@ -54,10 +54,10 @@ async def test_web_search_and_extract_single_extract_exception() -> None:
         raise RuntimeError("boom")
 
     with patch(
-        "mcp_web_server.server._web_search_impl",
+        "mcp_web_server.tools.search._web_search_impl",
         new=AsyncMock(return_value=search_data),
     ):
-        with patch("mcp_web_server.server._extract_webpage_content_impl", new=mock_extract):
+        with patch("mcp_web_server.tools.search._extract_webpage_content_impl", new=mock_extract):
             result = await web_search_and_extract("query", num_results=1)
 
     assert result["success"] is True
@@ -76,11 +76,11 @@ async def test_web_search_and_extract_uses_single_limit_per_stage() -> None:
     search_acquire = AsyncMock()
     extract_acquire = AsyncMock()
 
-    with patch("mcp_web_server.server.SEARCH_RATE_LIMITER.acquire", search_acquire):
-        with patch("mcp_web_server.server.EXTRACT_RATE_LIMITER.acquire", extract_acquire):
-            with patch("mcp_web_server.server._web_search_impl", new=AsyncMock(return_value=search_data)):
+    with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", search_acquire):
+        with patch("mcp_web_server.tools.search.EXTRACT_RATE_LIMITER.acquire", extract_acquire):
+            with patch("mcp_web_server.tools.search._web_search_impl", new=AsyncMock(return_value=search_data)):
                 with patch(
-                    "mcp_web_server.server._extract_webpage_content_impl",
+                    "mcp_web_server.tools.search._extract_webpage_content_impl",
                     new=AsyncMock(return_value={"url": "u", "title": "", "content": "c", "headings": []}),
                 ) as extract_impl:
                     result = await web_search_and_extract("query", num_results=2)
