@@ -9,6 +9,7 @@ from mcp_web_server.server import (
     fetch_json,
     http_request,
     web_search,
+    web_search_and_extract,
 )
 
 
@@ -116,3 +117,29 @@ async def test_extract_webpage_content_supports_rich_tags_in_dom_order() -> None
     assert "K | V" in content
     assert "```\nprint(\"hi\")\n```" in content
     assert content.index("## Heading One") < content.index("First paragraph.")
+
+
+@pytest.mark.asyncio
+async def test_web_search_and_extract_merges_content() -> None:
+    search_data = [
+        {"title": "A", "url": "https://a.com", "snippet": "sa"},
+        {"title": "B", "url": "https://b.com", "snippet": "sb"},
+    ]
+
+    async def mock_extract(url: str, include_links: bool = False, max_length: int = 10000) -> dict:
+        if "a.com" in url:
+            return {"success": True, "data": {"content": "content-a"}}
+        return {"success": False, "error": "HTTPStatusError", "message": "404"}
+
+    with patch(
+        "mcp_web_server.server.web_search",
+        new=AsyncMock(return_value={"success": True, "data": search_data}),
+    ):
+        with patch("mcp_web_server.server.extract_webpage_content", new=mock_extract):
+            result = await web_search_and_extract("query", num_results=2)
+
+    assert result["success"] is True
+    results = result["data"]["results"]
+    assert results[0]["content"] == "content-a"
+    assert results[1]["content"] == ""
+    assert results[1]["extract_error"]["error"] == "HTTPStatusError"

@@ -403,6 +403,98 @@ async def fetch_json(url: str, timeout: int = 30) -> dict:
         logger.info("fetch_json completed in %.2fs", time_module.perf_counter() - start)
 
 
+@mcp.tool()
+async def web_search_and_extract(
+    query: str,
+    num_results: int = 3,
+    max_content_length: int = 5000,
+    region: str = "wt-wt",
+) -> dict[str, Any]:
+    """
+    Search and extract content for top search results.
+
+    Args:
+        query: Search query string
+        num_results: Number of results to search/extract
+        max_content_length: Max content length for each extracted page
+        region: DuckDuckGo region code
+
+    Returns:
+        Unified response with query and extracted result list
+    """
+    start = time_module.perf_counter()
+    logger.info("web_search_and_extract called", extra={"query": query, "num_results": num_results})
+    try:
+        search_response = await web_search(
+            query=query,
+            num_results=num_results,
+            region=region,
+        )
+        if not search_response.get("success"):
+            return search_response
+
+        search_results = search_response.get("data", [])[:num_results]
+
+        async def _extract_item(item: dict[str, str]) -> dict[str, Any]:
+            url = item.get("url", "")
+            extract_response = await extract_webpage_content(url=url, max_length=max_content_length)
+
+            merged_item: dict[str, Any] = {
+                "title": item.get("title", ""),
+                "url": url,
+                "snippet": item.get("snippet", ""),
+            }
+            if extract_response.get("success"):
+                merged_item["content"] = extract_response.get("data", {}).get("content", "")
+            else:
+                merged_item["content"] = ""
+                merged_item["extract_error"] = {
+                    "error": extract_response.get("error", "Exception"),
+                    "message": extract_response.get("message", "Unknown extraction error"),
+                }
+            return merged_item
+
+        tasks = [_extract_item(item) for item in search_results]
+        extracted_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        merged_results: list[dict[str, Any]] = []
+        for item, extracted in zip(search_results, extracted_results):
+            if isinstance(extracted, Exception):
+                merged_results.append(
+                    {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "snippet": item.get("snippet", ""),
+                        "content": "",
+                        "extract_error": {
+                            "error": type(extracted).__name__,
+                            "message": str(extracted),
+                        },
+                    }
+                )
+            else:
+                merged_results.append(extracted)
+
+        return _success_response({"query": query, "results": merged_results})
+    except httpx.TimeoutException as exc:
+        logger.error("web_search_and_extract failed", exc_info=True)
+        return _error_response("TimeoutException", str(exc))
+    except httpx.ConnectError as exc:
+        logger.error("web_search_and_extract failed", exc_info=True)
+        return _error_response("ConnectError", str(exc))
+    except httpx.HTTPStatusError as exc:
+        logger.error("web_search_and_extract failed", exc_info=True)
+        return _error_response("HTTPStatusError", str(exc))
+    except json.JSONDecodeError as exc:
+        logger.error("web_search_and_extract failed", exc_info=True)
+        return _error_response("JSONDecodeError", str(exc))
+    except Exception as exc:
+        logger.error("web_search_and_extract failed", exc_info=True)
+        return _error_response("Exception", str(exc))
+    finally:
+        logger.info("web_search_and_extract completed in %.2fs", time_module.perf_counter() - start)
+
+
 def main():
     """Run the MCP server."""
     mcp.run()
