@@ -20,6 +20,7 @@ import httpx
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from ddgs import DDGS
+from mcp_web_server.models import ErrorResponse, HttpResponse, SearchResult, SuccessResponse, WebLink, WebpageContent
 
 try:
     from playwright.async_api import async_playwright
@@ -92,11 +93,11 @@ atexit.register(_close_http_client_at_exit)
 
 
 def _success_response(data: Any) -> dict[str, Any]:
-    return {"success": True, "data": data}
+    return SuccessResponse(data=data).model_dump()
 
 
 def _error_response(error_type: str, message: str) -> dict[str, Any]:
-    return {"success": False, "error": error_type, "message": message}
+    return ErrorResponse(error=error_type, message=message).model_dump()
 
 
 def _extract_content_blocks(content_tag: Tag) -> tuple[list[str], list[str]]:
@@ -211,11 +212,11 @@ async def http_request(
         response.raise_for_status()
 
         return _success_response(
-            {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": response.text,
-            }
+            HttpResponse(
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                body=response.text,
+            ).model_dump()
         )
     except httpx.TimeoutException as exc:
         logger.error("http_request failed", exc_info=True)
@@ -272,11 +273,11 @@ async def web_search(
                 )
                 for result in ddg_results:
                     results.append(
-                        {
-                            "title": result.get("title", ""),
-                            "url": result.get("href", ""),
-                            "snippet": result.get("body", ""),
-                        }
+                        SearchResult(
+                            title=result.get("title", ""),
+                            url=result.get("href", ""),
+                            snippet=result.get("body", ""),
+                        ).model_dump()
                     )
             return results
 
@@ -361,7 +362,7 @@ async def extract_webpage_content(
         if len(text_content) > max_length:
             text_content = text_content[:max_length] + "..."
 
-        result = {
+        webpage_data: dict[str, Any] = {
             "url": url,
             "title": title,
             "content": text_content,
@@ -369,9 +370,11 @@ async def extract_webpage_content(
         }
 
         if include_links:
-            result["links"] = links[:50]  # Limit links
+            webpage_data["links"] = [
+                WebLink(text=link["text"], url=link["url"]) for link in links[:50]
+            ]
 
-        return _success_response(result)
+        return _success_response(WebpageContent(**webpage_data).model_dump())
     except httpx.TimeoutException as exc:
         logger.error("extract_webpage_content failed", exc_info=True)
         return _error_response("TimeoutException", str(exc))
