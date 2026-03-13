@@ -6,9 +6,17 @@ import pytest
 
 @pytest.fixture
 def mock_httpx_client() -> Iterator[dict[str, AsyncMock]]:
-    with patch("mcp_web_server.http_client.HTTP_CLIENT.request", new_callable=AsyncMock) as mock_request:
-        with patch("mcp_web_server.http_client.HTTP_CLIENT.get", new_callable=AsyncMock) as mock_get:
-            yield {"request": mock_request, "get": mock_get}
+    # Mock safe_request in all tool modules where it's imported
+    with patch("mcp_web_server.tools.http.safe_request", new_callable=AsyncMock) as mock_http:
+        with patch("mcp_web_server.tools.extract.safe_request", new_callable=AsyncMock) as mock_extract:
+            with patch("mcp_web_server.tools.search.safe_request", new_callable=AsyncMock) as mock_search:
+                yield {
+                    "request": mock_http,
+                    "get": mock_http,
+                    "http": mock_http,
+                    "extract": mock_extract,
+                    "search": mock_search,
+                }
 
 
 @pytest.fixture

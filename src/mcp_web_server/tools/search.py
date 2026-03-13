@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time as time_module
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 from mcp.server.fastmcp import FastMCP
 
 from mcp_web_server.config import BING_DOMAIN, SEARCH_ENGINE, SUPPORTED_SEARCH_ENGINES, logger
-from mcp_web_server.http_client import HTTP_CLIENT
+from mcp_web_server.http_client import safe_request
 from mcp_web_server.models import SearchResult
 from mcp_web_server.tools.common import error_response, handle_common_exception, success_response
 from mcp_web_server.tools.extract import _extract_webpage_content_impl
@@ -136,7 +134,8 @@ async def _search_bing(query: str, num_results: int, region: str, time: str) -> 
     if time_filter:
         params["qft"] = time_filter
 
-    response = await HTTP_CLIENT.get(
+    response = await safe_request(
+        "GET",
         f"{_normalize_bing_base_url(BING_DOMAIN)}/search",
         params=params,
     )
@@ -175,7 +174,7 @@ async def _resolve_baidu_result_url(raw_url: str, node: Any) -> str:
         return raw_url
 
     try:
-        head_response = await HTTP_CLIENT.head(raw_url, timeout=10.0, follow_redirects=True)
+        head_response = await safe_request("HEAD", raw_url, timeout=10.0)
         resolved_url = str(head_response.url)
         if _is_http_url(resolved_url) and "baidu.com/link?" not in resolved_url:
             return resolved_url
@@ -183,7 +182,7 @@ async def _resolve_baidu_result_url(raw_url: str, node: Any) -> str:
         logger.debug("failed to resolve baidu url via HEAD: %s", raw_url, exc_info=True)
 
     try:
-        get_response = await HTTP_CLIENT.get(raw_url, timeout=10.0, follow_redirects=True)
+        get_response = await safe_request("GET", raw_url, timeout=10.0)
         resolved_url = str(get_response.url)
         if _is_http_url(resolved_url) and "baidu.com/link?" not in resolved_url:
             return resolved_url
@@ -199,7 +198,8 @@ async def _search_baidu(query: str, num_results: int, region: str, time: str) ->
     if (time or "").strip().lower() not in {"", "y"}:
         logger.warning("baidu search currently ignores time=%s", time)
 
-    response = await HTTP_CLIENT.get(
+    response = await safe_request(
+        "GET",
         "https://www.baidu.com/s",
         params={"wd": query, "rn": max(num_results, 1)},
     )
@@ -300,17 +300,7 @@ async def web_search_and_extract(
                 )
                 extract_response: dict[str, Any] = {"success": True, "data": extracted_data}
             except Exception as exc:
-                logger.error("extract_webpage_content failed", exc_info=True)
-                if isinstance(exc, httpx.TimeoutException):
-                    extract_response = error_response("TimeoutException", str(exc))
-                elif isinstance(exc, httpx.ConnectError):
-                    extract_response = error_response("ConnectError", str(exc))
-                elif isinstance(exc, httpx.HTTPStatusError):
-                    extract_response = error_response("HTTPStatusError", str(exc))
-                elif isinstance(exc, json.JSONDecodeError):
-                    extract_response = error_response("JSONDecodeError", str(exc))
-                else:
-                    extract_response = error_response(type(exc).__name__, str(exc))
+                extract_response = handle_common_exception("extract_webpage_content", exc)
 
             merged_item: dict[str, Any] = {
                 "title": item.get("title", ""),
@@ -335,6 +325,7 @@ async def web_search_and_extract(
         merged_results: list[dict[str, Any]] = []
         for item, extracted in zip(search_results, extracted_results):
             if isinstance(extracted, Exception):
+                sanitized_error = handle_common_exception("web_search_and_extract", extracted)
                 merged_results.append(
                     {
                         "title": item.get("title", ""),
@@ -342,8 +333,8 @@ async def web_search_and_extract(
                         "snippet": item.get("snippet", ""),
                         "content": "",
                         "extract_error": {
-                            "error": type(extracted).__name__,
-                            "message": str(extracted),
+                            "error": sanitized_error.get("error", "Exception"),
+                            "message": sanitized_error.get("message", "内部错误，请查看服务日志"),
                         },
                     }
                 )

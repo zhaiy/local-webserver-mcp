@@ -10,7 +10,7 @@ from bs4.element import Tag
 from mcp.server.fastmcp import FastMCP
 
 from mcp_web_server.config import logger
-from mcp_web_server.http_client import HTTP_CLIENT
+from mcp_web_server.http_client import safe_request
 from mcp_web_server.models import WebLink, WebpageContent
 from mcp_web_server.tools.common import error_response, handle_common_exception, success_response
 from mcp_web_server.utils.rate_limit import EXTRACT_RATE_LIMITER
@@ -92,7 +92,7 @@ async def _extract_webpage_content_impl(
     if apply_rate_limit:
         await EXTRACT_RATE_LIMITER.acquire()
     logger.debug("HTTP GET %s", url)
-    response = await HTTP_CLIENT.get(url)
+    response = await safe_request("GET", url)
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html.parser")

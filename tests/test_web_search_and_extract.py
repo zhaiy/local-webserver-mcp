@@ -63,8 +63,8 @@ async def test_web_search_and_extract_single_extract_exception() -> None:
     assert result["success"] is True
     first = result["data"]["results"][0]
     assert first["content"] == ""
-    assert first["extract_error"]["error"] == "RuntimeError"
-    assert first["extract_error"]["message"] == "boom"
+    assert first["extract_error"]["error"] == "Exception"
+    assert first["extract_error"]["message"] == "内部错误，请查看服务日志"
 
 
 @pytest.mark.asyncio

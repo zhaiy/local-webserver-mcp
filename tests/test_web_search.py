@@ -116,7 +116,7 @@ async def test_web_search_bing_parse_result() -> None:
     with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "bing"):
         with patch("mcp_web_server.tools.search.BING_DOMAIN", "www.bing.com"):
             with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
-                with patch("mcp_web_server.tools.search.HTTP_CLIENT.get", new=AsyncMock(return_value=response)) as mock_get:
+                with patch("mcp_web_server.tools.search.safe_request", new=AsyncMock(return_value=response)) as mock_get:
                     result = await web_search("python", num_results=1, region="cn-zh", time="d")
 
     assert result["success"] is True
@@ -149,7 +149,7 @@ async def test_web_search_bing_deduplicates_results() -> None:
 
     with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "bing"):
         with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
-            with patch("mcp_web_server.tools.search.HTTP_CLIENT.get", new=AsyncMock(return_value=response)):
+            with patch("mcp_web_server.tools.search.safe_request", new=AsyncMock(return_value=response)):
                 result = await web_search("python", num_results=10)
 
     assert result["success"] is True
@@ -176,7 +176,7 @@ async def test_web_search_baidu_parse_result() -> None:
 
     with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "baidu"):
         with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
-            with patch("mcp_web_server.tools.search.HTTP_CLIENT.get", new=AsyncMock(return_value=response)):
+            with patch("mcp_web_server.tools.search.safe_request", new=AsyncMock(return_value=response)):
                 result = await web_search("python", num_results=1)
 
     assert result["success"] is True
@@ -203,11 +203,17 @@ async def test_web_search_baidu_resolves_redirect_url() -> None:
     redirect_head_response = MagicMock()
     redirect_head_response.url = "https://target.example/article"
 
+    async def mock_safe_request(method: str, url: str, **kwargs):  # type: ignore[no-untyped-def]
+        if url == "https://www.baidu.com/s":
+            return search_response
+        if url == "https://www.baidu.com/link?url=abc" and method == "HEAD":
+            return redirect_head_response
+        raise AssertionError(f"unexpected call: method={method}, url={url}")
+
     with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "baidu"):
         with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
-            with patch("mcp_web_server.tools.search.HTTP_CLIENT.get", new=AsyncMock(return_value=search_response)):
-                with patch("mcp_web_server.tools.search.HTTP_CLIENT.head", new=AsyncMock(return_value=redirect_head_response)):
-                    result = await web_search("python", num_results=1)
+            with patch("mcp_web_server.tools.search.safe_request", new=AsyncMock(side_effect=mock_safe_request)):
+                result = await web_search("python", num_results=1)
 
     assert result["success"] is True
     assert result["data"][0]["url"] == "https://target.example/article"
@@ -221,7 +227,7 @@ async def test_web_search_baidu_warns_for_ignored_region_and_time() -> None:
 
     with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "baidu"):
         with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
-            with patch("mcp_web_server.tools.search.HTTP_CLIENT.get", new=AsyncMock(return_value=response)):
+            with patch("mcp_web_server.tools.search.safe_request", new=AsyncMock(return_value=response)):
                 with patch("mcp_web_server.tools.search.logger.warning") as warning:
                     result = await web_search("python", region="cn-zh", time="d")
 
@@ -238,7 +244,7 @@ async def test_web_search_bing_challenge_page_logs_warning() -> None:
 
     with patch("mcp_web_server.tools.search.SEARCH_ENGINE", "bing"):
         with patch("mcp_web_server.tools.search.SEARCH_RATE_LIMITER.acquire", new=AsyncMock()):
-            with patch("mcp_web_server.tools.search.HTTP_CLIENT.get", new=AsyncMock(return_value=response)):
+            with patch("mcp_web_server.tools.search.safe_request", new=AsyncMock(return_value=response)):
                 with patch("mcp_web_server.tools.search.logger.warning") as warning:
                     result = await web_search("python")
 

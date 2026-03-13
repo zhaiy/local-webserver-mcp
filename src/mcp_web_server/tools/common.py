@@ -20,13 +20,14 @@ def error_response(error_type: str, message: str) -> dict[str, Any]:
 
 
 def handle_common_exception(tool_name: str, exc: Exception) -> dict[str, Any]:
-    logger.error("%s failed", tool_name, exc_info=True)
+    logger.error("%s failed", tool_name, exc_info=True)  # 详细错误仅写入日志
     if isinstance(exc, httpx.TimeoutException):
-        return error_response("TimeoutException", str(exc))
+        return error_response("TimeoutException", "请求超时")
     if isinstance(exc, httpx.ConnectError):
-        return error_response("ConnectError", str(exc))
+        return error_response("ConnectError", "连接失败")
     if isinstance(exc, httpx.HTTPStatusError):
-        return error_response("HTTPStatusError", str(exc))
+        # 只返回状态码，不返回完整 URL
+        return error_response("HTTPStatusError", f"HTTP 错误: {exc.response.status_code}")
     if isinstance(exc, json.JSONDecodeError):
-        return error_response("JSONDecodeError", str(exc))
-    return error_response("Exception", str(exc))
+        return error_response("JSONDecodeError", "响应不是有效的 JSON")
+    return error_response("Exception", "内部错误，请查看服务日志")

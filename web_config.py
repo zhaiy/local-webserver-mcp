@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 """Web configuration interface for MCP server installation."""
 
-from flask import Flask, render_template_string, request, jsonify
-import subprocess
-import json
 import os
+import re
+import subprocess
+from typing import Any
+
+from flask import Flask, Response, jsonify, render_template_string, request
 
 app = Flask(__name__)
+
+# 白名单：serverName 只允许字母、数字、连字符、下划线
+SERVER_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+
+# scope 白名单
+VALID_SCOPES = {"local", "user", "project"}
+
+# 简单 token 认证（通过环境变量注入）
+WEB_CONFIG_TOKEN = os.getenv("WEB_CONFIG_TOKEN", "")
 
 # HTML 模板 - 配置界面
 HTML_TEMPLATE = """
@@ -248,8 +259,18 @@ HTML_TEMPLATE = """
 """
 
 
+@app.after_request
+def add_security_headers(response: Response) -> Response:
+    """添加安全响应头。"""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
 @app.route("/")
-def index():
+def index() -> str:
     """Render the configuration page."""
     # 获取当前项目路径作为默认值
     default_path = os.path.dirname(os.path.abspath(__file__))
@@ -257,32 +278,56 @@ def index():
 
 
 @app.route("/install", methods=["POST"])
-def install():
+def install() -> tuple[Response, int]:
     """Handle MCP server installation."""
     try:
-        data = request.get_json()
+        # Token 认证（若配置了 token 则强制验证）
+        if WEB_CONFIG_TOKEN:
+            auth = request.headers.get("X-Install-Token", "")
+            if auth != WEB_CONFIG_TOKEN:
+                return jsonify({"success": False, "error": "未授权"}), 403
+
+        data: dict[str, Any] = request.get_json() or {}
         server_name = data.get("serverName", "web-server")
         install_path = data.get("installPath")
         scope = data.get("scope", "local")
 
-        if not install_path:
+        # 验证 serverName 格式
+        if not isinstance(server_name, str) or not SERVER_NAME_RE.match(server_name):
+            return jsonify(
+                {"success": False, "error": "serverName 只允许字母、数字、连字符和下划线，长度 1-64 字符"}
+            ), 400
+
+        # 验证 scope 白名单
+        if not isinstance(scope, str) or scope not in VALID_SCOPES:
+            return jsonify(
+                {"success": False, "error": f"scope 必须是 {VALID_SCOPES} 之一"}
+            ), 400
+
+        # 验证 installPath
+        if not install_path or not isinstance(install_path, str):
             return jsonify({"success": False, "error": "安装路径不能为空"}), 400
 
+        # 解析符号链接、防路径穿越，并验证是否为存在的目录
+        install_path = os.path.realpath(install_path)
+        if not os.path.isdir(install_path):
+            return jsonify({"success": False, "error": "安装路径不存在或不是目录"}), 400
+
         # 构建 claude mcp add 命令
-        # 使用 stdio 方式，通过 uv 运行
         command = [
             "claude",
             "mcp",
             "add",
             server_name,
-            "-s", scope,
+            "-s",
+            scope,
             "--",
             "uv",
             "run",
             "--directory",
             install_path,
             "python",
-            "run_server.py"
+            "run_server.py",
         ]
 
         # 执行命令
@@ -290,25 +335,27 @@ def install():
             command,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
 
         if result.returncode == 0:
             return jsonify({
                 "success": True,
-                "message": result.stdout or "安装成功"
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": result.stderr or result.stdout or "命令执行失败"
-            }), 400
+                "message": result.stdout or "安装成功",
+            }), 200
+        return jsonify({
+            "success": False,
+            "error": result.stderr or result.stdout or "命令执行失败",
+        }), 400
 
     except subprocess.TimeoutExpired:
         return jsonify({"success": False, "error": "命令执行超时"}), 400
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        # 生产环境不暴露详细错误信息
+        return jsonify({"success": False, "error": "内部错误，请查看服务日志"}), 500
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    debug_mode = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    port = int(os.getenv("WEB_CONFIG_PORT", "5000"))
+    app.run(debug=debug_mode, port=port)

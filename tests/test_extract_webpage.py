@@ -18,7 +18,7 @@ async def test_extract_webpage_basic_content(
     mock_httpx_client: dict,
     sample_html_page: str,
 ) -> None:
-    mock_httpx_client["get"].return_value = _response_with_text(sample_html_page)
+    mock_httpx_client["extract"].return_value = _response_with_text(sample_html_page)
 
     result = await extract_webpage_content("https://example.com")
 
@@ -33,7 +33,7 @@ async def test_extract_webpage_include_links(
     mock_httpx_client: dict,
     sample_html_page: str,
 ) -> None:
-    mock_httpx_client["get"].return_value = _response_with_text(sample_html_page)
+    mock_httpx_client["extract"].return_value = _response_with_text(sample_html_page)
 
     result = await extract_webpage_content("https://example.com", include_links=True)
 
@@ -44,7 +44,7 @@ async def test_extract_webpage_include_links(
 @pytest.mark.asyncio
 async def test_extract_webpage_max_length(mock_httpx_client: dict) -> None:
     html = "<html><body><p>" + ("x" * 1000) + "</p></body></html>"
-    mock_httpx_client["get"].return_value = _response_with_text(html)
+    mock_httpx_client["extract"].return_value = _response_with_text(html)
 
     result = await extract_webpage_content("https://example.com", max_length=100)
 
@@ -54,7 +54,7 @@ async def test_extract_webpage_max_length(mock_httpx_client: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_extract_webpage_non_html_content(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].return_value = _response_with_text("plain text body only")
+    mock_httpx_client["extract"].return_value = _response_with_text("plain text body only")
 
     result = await extract_webpage_content("https://example.com")
 
@@ -64,7 +64,7 @@ async def test_extract_webpage_non_html_content(mock_httpx_client: dict) -> None
 
 @pytest.mark.asyncio
 async def test_extract_webpage_timeout(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].side_effect = httpx.TimeoutException("timeout")
+    mock_httpx_client["extract"].side_effect = httpx.TimeoutException("timeout")
 
     result = await extract_webpage_content("https://example.com")
 
@@ -74,7 +74,7 @@ async def test_extract_webpage_timeout(mock_httpx_client: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_extract_webpage_connect_error(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].side_effect = httpx.ConnectError("connect failed")
+    mock_httpx_client["extract"].side_effect = httpx.ConnectError("connect failed")
 
     result = await extract_webpage_content("https://example.com")
 

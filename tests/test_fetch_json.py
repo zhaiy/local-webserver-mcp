@@ -16,7 +16,7 @@ def _json_response(data: dict) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_fetch_json_success(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].return_value = _json_response({"ok": True})
+    mock_httpx_client["http"].return_value = _json_response({"ok": True})
 
     result = await fetch_json("https://example.com/data.json")
 
@@ -26,7 +26,7 @@ async def test_fetch_json_success(mock_httpx_client: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_json_timeout(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].side_effect = httpx.TimeoutException("timeout")
+    mock_httpx_client["http"].side_effect = httpx.TimeoutException("timeout")
 
     result = await fetch_json("https://example.com/data.json")
 
@@ -36,7 +36,7 @@ async def test_fetch_json_timeout(mock_httpx_client: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_json_connect_error(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].side_effect = httpx.ConnectError("connect failed")
+    mock_httpx_client["http"].side_effect = httpx.ConnectError("connect failed")
 
     result = await fetch_json("https://example.com/data.json")
 
@@ -49,7 +49,7 @@ async def test_fetch_json_invalid_json(mock_httpx_client: dict) -> None:
     response = MagicMock()
     response.raise_for_status.return_value = None
     response.json.side_effect = json.JSONDecodeError("bad json", "x", 0)
-    mock_httpx_client["get"].return_value = response
+    mock_httpx_client["http"].return_value = response
 
     result = await fetch_json("https://example.com/data.json")
 
@@ -59,7 +59,7 @@ async def test_fetch_json_invalid_json(mock_httpx_client: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_json_empty_object(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].return_value = _json_response({})
+    mock_httpx_client["http"].return_value = _json_response({})
 
     result = await fetch_json("https://example.com/data.json")
 
@@ -69,7 +69,7 @@ async def test_fetch_json_empty_object(mock_httpx_client: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_json_applies_http_rate_limit(mock_httpx_client: dict) -> None:
-    mock_httpx_client["get"].return_value = _json_response({"ok": True})
+    mock_httpx_client["http"].return_value = _json_response({"ok": True})
     acquire_mock = AsyncMock()
 
     with patch("mcp_web_server.tools.http.HTTP_RATE_LIMITER.acquire", acquire_mock):

@@ -16,11 +16,11 @@ async def test_batch_http_request_empty_url_list() -> None:
 @pytest.mark.asyncio
 async def test_batch_http_request_all_timeout() -> None:
     with patch(
-        "mcp_web_server.tools.http.HTTP_CLIENT.request",
+        "mcp_web_server.tools.http.safe_request",
         new=AsyncMock(side_effect=httpx.TimeoutException("timeout")),
     ):
         result = await batch_http_request(
-            ["https://a.example", "https://b.example"],
+            ["https://example.com/a", "https://example.com/b"],
             max_concurrent=2,
         )
 
@@ -48,12 +48,13 @@ async def test_batch_http_request_partial_success_partial_failure() -> None:
     )
 
     async def mock_request(*args, **kwargs):  # type: ignore[no-untyped-def]
-        if kwargs.get("url") == "https://ok.example":
+        url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
+        if url == "https://example.com/ok":
             return ok_response
         return bad_response
 
-    with patch("mcp_web_server.tools.http.HTTP_CLIENT.request", new=AsyncMock(side_effect=mock_request)):
-        result = await batch_http_request(["https://ok.example", "https://bad.example"])
+    with patch("mcp_web_server.tools.http.safe_request", new=AsyncMock(side_effect=mock_request)):
+        result = await batch_http_request(["https://example.com/ok", "https://example.com/bad"])
 
     assert result["success"] is True
     assert result["data"][0]["success"] is True

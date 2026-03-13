@@ -22,7 +22,7 @@ async def test_http_request_success_response_shape() -> None:
     mock_response.text = '{"ok": true}'
     mock_response.raise_for_status.return_value = None
 
-    with patch("mcp_web_server.tools.http.HTTP_CLIENT.request", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.http.safe_request", new=AsyncMock(return_value=mock_response)):
         result = await http_request("https://example.com")
 
     assert result["success"] is True
@@ -35,11 +35,10 @@ async def test_web_search_error_response_shape() -> None:
     with patch("mcp_web_server.tools.search.DDGS", side_effect=RuntimeError("boom")):
         result = await web_search("python")
 
-    assert result == {
-        "success": False,
-        "error": "Exception",
-        "message": "boom",
-    }
+    # 安全修复后，错误消息不再暴露详细信息
+    assert result["success"] is False
+    assert result["error"] == "Exception"
+    assert result["message"] == "内部错误，请查看服务日志"
 
 
 @pytest.mark.asyncio
@@ -65,7 +64,7 @@ async def test_extract_webpage_content_http_status_error() -> None:
         response=response,
     )
 
-    with patch("mcp_web_server.tools.extract.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.extract.safe_request", new=AsyncMock(return_value=mock_response)):
         result = await extract_webpage_content("https://example.com")
 
     assert result["success"] is False
@@ -78,7 +77,7 @@ async def test_fetch_json_json_decode_error() -> None:
     mock_response.raise_for_status.return_value = None
     mock_response.json.side_effect = json.JSONDecodeError("bad json", "x", 0)
 
-    with patch("mcp_web_server.tools.http.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.http.safe_request", new=AsyncMock(return_value=mock_response)):
         result = await fetch_json("https://example.com")
 
     assert result["success"] is False
@@ -106,7 +105,7 @@ async def test_extract_webpage_content_supports_rich_tags_in_dom_order() -> None
     mock_response.text = html
     mock_response.raise_for_status.return_value = None
 
-    with patch("mcp_web_server.tools.extract.HTTP_CLIENT.get", new=AsyncMock(return_value=mock_response)):
+    with patch("mcp_web_server.tools.extract.safe_request", new=AsyncMock(return_value=mock_response)):
         result = await extract_webpage_content("https://example.com")
 
     assert result["success"] is True
@@ -146,6 +145,7 @@ async def test_web_search_and_extract_merges_content() -> None:
     assert results[0]["content"] == "content-a"
     assert results[1]["content"] == ""
     assert results[1]["extract_error"]["error"] == "HTTPStatusError"
+    assert results[1]["extract_error"]["message"] == "HTTP 错误: 404"
 
 
 @pytest.mark.asyncio
@@ -156,7 +156,7 @@ async def test_batch_http_request_returns_per_url_results() -> None:
     ok_response.text = "ok"
     ok_response.raise_for_status.return_value = None
 
-    request = httpx.Request("GET", "https://bad.example")
+    request = httpx.Request("GET", "https://example.com/bad")
     bad_raw = httpx.Response(500, request=request)
     bad_response = MagicMock()
     bad_response.raise_for_status.side_effect = httpx.HTTPStatusError(
@@ -166,17 +166,18 @@ async def test_batch_http_request_returns_per_url_results() -> None:
     )
 
     async def mock_request(*args, **kwargs):  # type: ignore[no-untyped-def]
-        if kwargs.get("url") == "https://ok.example":
+        url = kwargs.get("url") or (args[1] if len(args) > 1 else "")
+        if url == "https://example.com/ok":
             return ok_response
         return bad_response
 
-    with patch("mcp_web_server.tools.http.HTTP_CLIENT.request", new=AsyncMock(side_effect=mock_request)):
-        result = await batch_http_request(["https://ok.example", "https://bad.example"])
+    with patch("mcp_web_server.tools.http.safe_request", new=AsyncMock(side_effect=mock_request)):
+        result = await batch_http_request(["https://example.com/ok", "https://example.com/bad"])
 
     assert result["success"] is True
     entries = result["data"]
-    assert entries[0]["url"] == "https://ok.example"
+    assert entries[0]["url"] == "https://example.com/ok"
     assert entries[0]["success"] is True
-    assert entries[1]["url"] == "https://bad.example"
+    assert entries[1]["url"] == "https://example.com/bad"
     assert entries[1]["success"] is False
     assert entries[1]["error"] == "HTTPStatusError"

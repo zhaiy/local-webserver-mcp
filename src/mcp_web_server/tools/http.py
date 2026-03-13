@@ -9,7 +9,7 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 
 from mcp_web_server.config import logger
-from mcp_web_server.http_client import HTTP_CLIENT, HTTP_HEADERS
+from mcp_web_server.http_client import HTTP_CLIENT, HTTP_HEADERS, safe_request
 from mcp_web_server.models import HttpResponse
 from mcp_web_server.tools.common import error_response, handle_common_exception, success_response
 from mcp_web_server.utils.rate_limit import HTTP_RATE_LIMITER
@@ -36,7 +36,7 @@ async def http_request(
     try:
         await HTTP_RATE_LIMITER.acquire()
         logger.debug("HTTP %s %s", method.upper(), url)
-        response = await HTTP_CLIENT.request(
+        response = await safe_request(
             method=method.upper(),
             url=url,
             headers=merged_headers,
@@ -67,7 +67,7 @@ async def fetch_json(url: str, timeout: int = 30) -> dict[str, Any]:
     try:
         await HTTP_RATE_LIMITER.acquire()
         logger.debug("HTTP GET %s", url)
-        response = await HTTP_CLIENT.get(url, timeout=timeout)
+        response = await safe_request("GET", url, timeout=timeout)
         response.raise_for_status()
         return success_response(response.json())
     except Exception as exc:
@@ -106,7 +106,7 @@ async def batch_http_request(
         async with semaphore:
             try:
                 logger.debug("HTTP %s %s", method.upper(), url)
-                response = await HTTP_CLIENT.request(
+                response = await safe_request(
                     method=method.upper(),
                     url=url,
                     headers=merged_headers,
